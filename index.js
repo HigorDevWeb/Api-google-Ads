@@ -1,30 +1,60 @@
-// tokens.js
-require('dotenv').config();
-const { OAuth2Client } = require('google-auth-library');
+import 'dotenv/config'; // Carrega as variáveis de ambiente
+import express from 'express';
+import { GoogleAdsApi } from 'google-ads-api';
 
-const oauth2Client = new OAuth2Client(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  'http://localhost'
-);
+// Initialize Express app
+const app = express();
+const port = process.env.PORT || 3000;
 
-const authUrl = oauth2Client.generateAuthUrl({
-  access_type: 'offline',
-  scope: ['https://www.googleapis.com/auth/adwords'],
-  response_type: 'code'
+// Initialize Google Ads API client
+const client = new GoogleAdsApi({
+  client_id: process.env.CLIENT_ID,
+  client_secret: process.env.CLIENT_SECRET,
+  developer_token: process.env.DEVELOPER_TOKEN,
 });
 
-console.log(`Authorize this app by visiting this URL: ${authUrl}`);
+// Customer ID and refresh token
+const customer = client.Customer({
+  customer_id: process.env.CUSTOMER_ID,
+  refresh_token: process.env.REFRESH_TOKEN,
+});
 
-async function getTokens(code) {
-  try {
-    const { tokens } = await oauth2Client.getToken(code);
-    console.log('Access Token:', tokens.access_token);
-    console.log('Refresh Token:', tokens.refresh_token);
-  } catch (error) {
-    console.error('Error getting tokens:', error);
+// Middleware to parse JSON requests
+app.use(express.json());
+
+// Endpoint to fetch keyword ideas
+app.get('/keywords', async (req, res) => {
+  const { keyword, location_id, language_id } = req.query;
+
+  if (!keyword) {
+    return res.status(400).json({ error: 'Keyword is required' });
   }
-}
 
-const codeFromAuthUrl = 'your-authorization-code';
-getTokens(codeFromAuthUrl);
+  try {
+    const keywordPlanService = customer.keywordPlanIdeas;
+
+    // Request for keyword ideas
+    const results = await keywordPlanService.generateKeywordIdeas({
+      language: `customers/${process.env.CUSTOMER_ID}/languages/${language_id || '1000'}`, // Default to English
+      geo_target_constants: [`customers/${process.env.CUSTOMER_ID}/geoTargetConstants/${location_id || '2840'}`], // Default to US
+      keyword_seed: { keywords: [keyword] },
+    });
+
+    // Return the keyword ideas in response
+    const keywordIdeas = results.results.map(idea => ({
+      keyword: idea.text,
+      avgMonthlySearches: idea.keyword_idea_metrics.avg_monthly_searches,
+      competition: idea.keyword_idea_metrics.competition,
+    }));
+
+    res.json({ keywordIdeas });
+  } catch (error) {
+    console.error('Error fetching keyword ideas:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server is running on http://localhost:${port}`);
+});
